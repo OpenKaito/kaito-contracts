@@ -1,0 +1,47 @@
+{
+  "name": "kaito-contracts",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "git@github.com:OpenKaito/kaito-contracts.git",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22 <24",
+    "yarn": "^1.22.22"
+  },
+  "scripts": {
+    "setup": "yarn install --frozen-lockfile",
+    "compile-sol": "forge build --force",
+    "compile-ts": "tsc --noEmit",
+    "check-pretty": "prettier --check .",
+    "lint-es": "eslint --ignore-path .prettierignore \"./**/*.ts\"",
+    "lint-sol": "solhint \"contracts/**/*.sol\"",
+    "test": "forge test"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-foundry": "^1.1.2",
+    "@nomiclabs/hardhat-ethers": "^2.0.2",
+    "@nomiclabs/hardhat-waffle": "^2.0.1",
+    "@types/chai": "^4.2.21",
+    "@types/mocha": "^9.0.0",
+    "@types/node": "^16.7.8",
+    "@typescript-eslint/eslint-plugin": "^5.1.0",
+    "@typescript-eslint/parser": "^5.1.0",
+    "chai": "^4.3.4",
+    "dotenv": "^10.0.0",
+    "eslint": "^8.47.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-mocha-no-only": "^1.1.1",
+    "ethereum-waffle": "^3.3.0",
+    "ethers": "^5.2.0",
+    "hardhat": "^2.22.9",
+    "pino": "^9.3.2",
+    "pino-pretty": "^11.2.2",
+    "prettier": "^3.4.2",
+    "prettier-plugin-solidity": "^1.4.2",
+    "solhint": "^3.6.2",
+    "solhint-plugin-prettier": "^0.0.5",
+    "ts-node": "^10.2.1",
+    "tsconfig-paths": "^3.9.0",
+    "typescript": "^4.4.2"
+  }
+}

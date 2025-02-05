@@ -1,0 +1,17 @@
+node_modules/
+.env
+
+# Foundry
+out/
+cache/
+lib/
+
+#Hardhat files
+cache/
+artifacts/
+
+# Typechain artifacts
+typechain/
+
+# Generated deployments
+deployments/
