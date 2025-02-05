@@ -5,7 +5,7 @@ import "openzeppelin/token/ERC20/extensions/ERC20Permit.sol";
 
 /// @title Kaito
 contract Kaito is ERC20Permit {
-    uint256 constant TOTALSUPPLY = 1e27;
+    uint256 constant TOTALSUPPLY = 1e9 ether;
     constructor(string memory name_, string memory symbol_, address[] memory wallets, uint256[] memory amounts) ERC20Permit(name_) ERC20(name_, symbol_) {
         require(wallets.length == amounts.length, "array_length");
         for (uint256 i = 0; i < wallets.length; i++) {
