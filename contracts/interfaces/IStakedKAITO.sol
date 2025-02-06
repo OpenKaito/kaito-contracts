@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-interface IveKAITO {
+interface IStakedKAITO {
     event RewardsReceived(uint256 amount);
     event LockedAmountRedistributed(address indexed from, address indexed to, uint256 amount);
     event CooldownDurationUpdated(uint24 previousDuration, uint24 newDuration);

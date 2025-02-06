@@ -8,9 +8,9 @@ import "openzeppelin/security/ReentrancyGuard.sol";
 import "openzeppelin/access/Ownable2Step.sol";
 import "./AgingPool.sol";
 import "./SingleAdminAccessControl.sol";
-import "./interfaces/IveKAITO.sol";
+import "./interfaces/IStakedKAITO.sol";
 
-contract veKAITO is SingleAdminAccessControl, ReentrancyGuard, ERC20Permit, ERC4626, IveKAITO {
+contract StakedKAITO is SingleAdminAccessControl, ReentrancyGuard, ERC20Permit, ERC4626, IStakedKAITO {
     using SafeERC20 for IERC20;
 
     struct UserCooldown {
@@ -44,7 +44,7 @@ contract veKAITO is SingleAdminAccessControl, ReentrancyGuard, ERC20Permit, ERC4
         _;
     }
 
-    constructor(IERC20 _asset, address _initialRewarder, address _owner) ERC4626(_asset) ERC20("Vote-Escrowed Kaito", "veKAITO") ERC20Permit("veKAITO") {
+    constructor(IERC20 _asset, address _initialRewarder, address _owner) ERC4626(_asset) ERC20("Staked KAITO", "sKAITO") ERC20Permit("sKAITO") {
         if (_owner == address(0) || _initialRewarder == address(0) || address(_asset) == address(0)) {
             revert InvalidZeroAddress();
         }
