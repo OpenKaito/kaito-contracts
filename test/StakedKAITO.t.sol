@@ -17,6 +17,7 @@ contract StakedKAITOTest is Test {
     address blacklistManager = makeAddr("blacklistManager");
     address initialRewarder = makeAddr("initialRewarder");
     address user = makeAddr("user");
+    address bob = makeAddr("bob");
 
     ERC20Mintable kaito;
     StakedKAITO sKAITO;
@@ -26,6 +27,7 @@ contract StakedKAITOTest is Test {
         sKAITO = new StakedKAITO(IERC20(kaito), initialRewarder, owner);
         deal(initialRewarder, 1000 ether);
         deal(user, 1000 ether);
+        deal(bob, 1000 ether);
 
         kaito.mint(initialRewarder, 100000 ether);
         vm.startPrank(initialRewarder);
@@ -37,10 +39,16 @@ contract StakedKAITOTest is Test {
         IERC20(kaito).safeApprove(address(sKAITO), type(uint256).max);
         vm.stopPrank();
 
+        kaito.mint(bob, 100000 ether);
+        vm.startPrank(bob);
+        IERC20(kaito).safeApprove(address(sKAITO), type(uint256).max);
+        vm.stopPrank();
+
         vm.label(owner, "owner");
         vm.label(blacklistManager, "blacklistManager");
         vm.label(initialRewarder, "initialRewarder");
         vm.label(user, "user");
+        vm.label(bob, "bob");
     }
 
     function testStake() public {
@@ -135,14 +143,41 @@ contract StakedKAITOTest is Test {
         sKAITO.redeem(1 ether, user, user);
         vm.stopPrank();
 
-        vm.prank(owner);
+        vm.startPrank(owner);
+        vm.expectRevert(IStakedKAITO.InvalidDuration.selector);
+        sKAITO.setCooldownDuration(100 days);
         vm.expectEmit(true, true, true, true);
         emit IStakedKAITO.CooldownDurationUpdated(7 days, 0);
         sKAITO.setCooldownDuration(0);
+        require(sKAITO.cooldownDuration() == 0, "incorrect value");
+        vm.stopPrank();
 
+        // should be able to withdraw/redeem without cooling
         vm.startPrank(user);
         sKAITO.withdraw(1 ether, user, user);
         sKAITO.redeem(1 ether, user, user);
+        vm.stopPrank();
+    }
+
+    function testSetVestingPeriod() public {
+        uint256 amount = 10 ether;
+        vm.startPrank(user);
+        uint256 shares = sKAITO.deposit(amount, user);
+        sKAITO.cooldownShares(shares);
+        vm.stopPrank();
+
+        vm.prank(initialRewarder);
+        sKAITO.transferInRewards(100 ether);
+        vm.startPrank(owner);
+        vm.expectRevert(IStakedKAITO.StillVesting.selector);
+        sKAITO.setVestingPeriod(100 days);
+        vm.warp(block.timestamp + 7 days);
+        vm.expectRevert(IStakedKAITO.InvalidVestingPeriod.selector);
+        sKAITO.setVestingPeriod(100 days);
+        vm.expectEmit(true, true, true, true);
+        emit IStakedKAITO.VestingPeriodUpdated(7 days, 1 days);
+        sKAITO.setVestingPeriod(1 days);
+        require(sKAITO.vestingPeriod() == 1 days, "incorrect value");
         vm.stopPrank();
     }
 
@@ -154,26 +189,22 @@ contract StakedKAITOTest is Test {
         vm.prank(owner);
         sKAITO.grantRole(BLACKLIST_MANAGER_ROLE, blacklistManager);
 
-        // SOFT_RESTRICTED_STAKER_ROLE can do anything but stake
+        // BLACKLISTED_ROLE can't transfer/stake/receive stake/withdraw/redeem
         vm.prank(blacklistManager);
-        sKAITO.addToBlacklist(user, false);
+        sKAITO.addToBlacklist(user);
         vm.startPrank(user);
         vm.expectRevert(IStakedKAITO.OperationNotAllowed.selector);
         sKAITO.deposit(5 ether, user);
+        vm.expectRevert(IStakedKAITO.OperationNotAllowed.selector);
         sKAITO.cooldownAssets(1 ether);
+        vm.expectRevert(IStakedKAITO.OperationNotAllowed.selector);
+        sKAITO.cooldownShares(1 ether);
+        vm.expectRevert(IStakedKAITO.OperationNotAllowed.selector);
         sKAITO.transfer(owner, 1 ether);
         vm.stopPrank();
 
-        // FULL_RESTRICTED_STAKER_ROLE can't do anything
-        vm.prank(blacklistManager);
-        sKAITO.addToBlacklist(user, true);
-        vm.startPrank(user);
+        vm.prank(bob);
         vm.expectRevert(IStakedKAITO.OperationNotAllowed.selector);
         sKAITO.deposit(5 ether, user);
-        vm.expectRevert(IStakedKAITO.OperationNotAllowed.selector);
-        sKAITO.cooldownAssets(1 ether);
-        vm.expectRevert(IStakedKAITO.OperationNotAllowed.selector);
-        sKAITO.transfer(owner, 1 ether);
-        vm.stopPrank();
     }
 }
