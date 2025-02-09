@@ -18,20 +18,18 @@ contract StakedKAITO is SingleAdminAccessControl, ReentrancyGuard, ERC20Permit, 
         uint152 lockedAmount;
     }
 
-    uint24 public constant MAX_COOLDOWN_DURATION = 7 days;
-    uint256 private constant VESTING_PERIOD = 30 days;
+    uint24 public constant MAX_COOLDOWN_DURATION = 90 days;
+    uint24 public constant MAX_VESTING_PERIOD = 90 days;
     uint256 private constant MIN_SHARES = 1 ether;
     bytes32 private constant REWARDER_ROLE = keccak256("REWARDER_ROLE");
     bytes32 private constant BLACKLIST_MANAGER_ROLE = keccak256("BLACKLIST_MANAGER_ROLE");
-    /// @notice The role which prevents an address to stake
-    bytes32 private constant SOFT_RESTRICTED_STAKER_ROLE = keccak256("SOFT_RESTRICTED_STAKER_ROLE");
-    /// @notice The role which prevents an address to transfer, stake, or unstake. The owner of the contract can redirect address staking balance if an address is in full restricting mode.
-    bytes32 private constant FULL_RESTRICTED_STAKER_ROLE = keccak256("FULL_RESTRICTED_STAKER_ROLE");
+    bytes32 private constant BLACKLISTED_ROLE = keccak256("BLACKLISTED_ROLE");
 
     uint256 public vestingAmount;
     uint256 public lastDistributionTimestamp;
     mapping(address => UserCooldown) public cooldowns;
     uint24 public cooldownDuration;
+    uint24 public vestingPeriod;
     AgingPool public immutable agingPool;
 
     modifier ensureCooldownOff() {
@@ -49,20 +47,19 @@ contract StakedKAITO is SingleAdminAccessControl, ReentrancyGuard, ERC20Permit, 
             revert InvalidZeroAddress();
         }
         agingPool = new AgingPool(address(this), address(_asset));
-        cooldownDuration = MAX_COOLDOWN_DURATION;
         _grantRole(REWARDER_ROLE, _initialRewarder);
         _grantRole(DEFAULT_ADMIN_ROLE, _owner);
+        _updateCooldownDuration(7 days);
+        _updateVestingPeriod(7 days);
     }
 
-    function addToBlacklist(address target, bool isFullBlacklisting) external onlyRole(BLACKLIST_MANAGER_ROLE) {
+    function addToBlacklist(address target) external onlyRole(BLACKLIST_MANAGER_ROLE) {
         if (target == owner()) revert CantBlacklistOwner();
-        bytes32 role = isFullBlacklisting ? FULL_RESTRICTED_STAKER_ROLE : SOFT_RESTRICTED_STAKER_ROLE;
-        _grantRole(role, target);
+        _grantRole(BLACKLISTED_ROLE, target);
     }
 
-    function removeFromBlacklist(address target, bool isFullBlacklisting) external onlyRole(BLACKLIST_MANAGER_ROLE) {
-        bytes32 role = isFullBlacklisting ? FULL_RESTRICTED_STAKER_ROLE : SOFT_RESTRICTED_STAKER_ROLE;
-        _revokeRole(role, target);
+    function removeFromBlacklist(address target) external onlyRole(BLACKLIST_MANAGER_ROLE) {
+        _revokeRole(BLACKLISTED_ROLE, target);
     }
 
     function transferInRewards(uint256 amount) external nonReentrant onlyRole(REWARDER_ROLE) {
@@ -76,47 +73,49 @@ contract StakedKAITO is SingleAdminAccessControl, ReentrancyGuard, ERC20Permit, 
     function rescueTokens(address token, uint256 amount, address to) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
         if (address(token) == asset()) revert InvalidToken();
         IERC20(token).safeTransfer(to, amount);
+        emit TokensRescued(token, to, amount);
     }
 
     /**
      * @dev Burns the full restricted user amount and mints to the desired owner address.
-     * @param from The address to burn the entire balance, with the FULL_RESTRICTED_STAKER_ROLE
+     * @param from The address to burn the entire balance, with the BLACKLISTED_ROLE
      * @param to The address to mint the entire balance of "from" parameter.
      */
     function redistributeLockedAmount(address from, address to) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (hasRole(FULL_RESTRICTED_STAKER_ROLE, from) && !hasRole(FULL_RESTRICTED_STAKER_ROLE, to)) {
-            uint256 amountToDistribute = balanceOf(from);
-            uint256 usdeToVest = previewRedeem(amountToDistribute);
-            _burn(from, amountToDistribute);
+        if (hasRole(BLACKLISTED_ROLE, from) && !hasRole(BLACKLISTED_ROLE, to)) {
+            uint256 shares = balanceOf(from);
+            if (shares == 0) revert InvalidAmount();
+            uint256 assets = previewRedeem(shares);
+            _burn(from, shares);
             // to address of address(0) enables burning
             if (to == address(0)) {
-                _updateVestingAmount(usdeToVest);
+                _updateVestingAmount(assets);
             } else {
-                _mint(to, amountToDistribute);
+                _mint(to, shares);
             }
 
-            emit LockedAmountRedistributed(from, to, amountToDistribute);
+            emit LockedAmountRedistributed(from, to, shares);
         } else {
             revert OperationNotAllowed();
         }
     }
 
-    /// @notice Set cooldown duration. If cooldown duration is set to zero, the StakedUSDeV2 behavior changes to follow ERC4626 standard and disables cooldownShares and cooldownAssets methods. If cooldown duration is greater than zero, the ERC4626 withdrawal and redeem functions are disabled, breaking the ERC4626 standard, and enabling the cooldownShares and the cooldownAssets functions.
+    /// @notice Set cooldown duration. If cooldown duration is set to zero, the contract behavior changes to follow ERC4626 standard and disables cooldownShares and cooldownAssets methods. If cooldown duration is greater than zero, the ERC4626 withdrawal and redeem functions are disabled, breaking the ERC4626 standard, and enabling the cooldownShares and the cooldownAssets functions.
     /// @param duration Duration of the cooldown
     function setCooldownDuration(uint24 duration) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (duration > MAX_COOLDOWN_DURATION) revert InvalidDuration();
-
-        uint24 previousDuration = cooldownDuration;
-        cooldownDuration = duration;
-        emit CooldownDurationUpdated(previousDuration, cooldownDuration);
+        _updateCooldownDuration(duration);
     }
 
-    function withdraw(uint256 assets, address receiver, address owner) public virtual override ensureCooldownOff returns (uint256) {
-        return super.withdraw(assets, receiver, owner);
+    function setVestingPeriod(uint24 newVestingPeriod) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
+        _updateVestingPeriod(newVestingPeriod);
     }
 
-    function redeem(uint256 shares, address receiver, address owner) public virtual override ensureCooldownOff returns (uint256) {
-        return super.redeem(shares, receiver, owner);
+    function withdraw(uint256 assets, address recipient, address owner) public virtual override ensureCooldownOff returns (uint256) {
+        return super.withdraw(assets, recipient, owner);
+    }
+
+    function redeem(uint256 shares, address recipient, address owner) public virtual override ensureCooldownOff returns (uint256) {
+        return super.redeem(shares, recipient, owner);
     }
 
     // @dev withdraw with cooldown
@@ -129,6 +128,7 @@ contract StakedKAITO is SingleAdminAccessControl, ReentrancyGuard, ERC20Permit, 
         cooldowns[msg.sender].lockedAmount += uint152(assets);
 
         _withdraw(msg.sender, address(agingPool), msg.sender, assets, shares);
+        emit CooldownStarted(msg.sender, assets, shares);
     }
 
     // @dev redeem with cooldown
@@ -141,6 +141,7 @@ contract StakedKAITO is SingleAdminAccessControl, ReentrancyGuard, ERC20Permit, 
         cooldowns[msg.sender].lockedAmount += uint152(assets);
 
         _withdraw(msg.sender, address(agingPool), msg.sender, assets, shares);
+        emit CooldownStarted(msg.sender, assets, shares);
     }
 
     function claimFromAP(address recipient) external {
@@ -152,9 +153,14 @@ contract StakedKAITO is SingleAdminAccessControl, ReentrancyGuard, ERC20Permit, 
             userCooldown.lockedAmount = 0;
 
             agingPool.withdraw(recipient, lockedAmount);
+            emit Claim(msg.sender, recipient, lockedAmount);
         } else {
             revert ClaimNotMature();
         }
+    }
+
+    function useNonce() external override returns (uint256) {
+        return _useNonce(msg.sender);
     }
 
     function totalAssets() public view override returns (uint256) {
@@ -164,20 +170,27 @@ contract StakedKAITO is SingleAdminAccessControl, ReentrancyGuard, ERC20Permit, 
     function getUnvestedAmount() public view returns (uint256) {
         uint256 timeSinceLastDistribution = block.timestamp - lastDistributionTimestamp;
 
-        if (timeSinceLastDistribution >= VESTING_PERIOD) {
+        if (timeSinceLastDistribution >= vestingPeriod) {
             return 0;
         }
 
         uint256 deltaT;
         unchecked {
-            deltaT = (VESTING_PERIOD - timeSinceLastDistribution);
+            deltaT = (vestingPeriod - timeSinceLastDistribution);
         }
-        return (deltaT * vestingAmount) / VESTING_PERIOD;
+        return (deltaT * vestingAmount) / vestingPeriod;
     }
 
     /// @dev Necessary because both ERC20 (from ERC20Permit) and ERC4626 declare decimals()
     function decimals() public pure override(ERC4626, ERC20) returns (uint8) {
         return 18;
+    }
+
+    /**
+     * @dev Remove renounce role access from AccessControl, to prevent users to resign roles.
+     */
+    function renounceRole(bytes32, address) public virtual override {
+        revert OperationNotAllowed();
     }
 
     /// @notice ensures a small non-zero amount of shares does not remain, exposing to donation attack
@@ -186,22 +199,20 @@ contract StakedKAITO is SingleAdminAccessControl, ReentrancyGuard, ERC20Permit, 
         if (_totalSupply > 0 && _totalSupply < MIN_SHARES) revert MinSharesViolation();
     }
 
-    function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal override nonReentrant {
-        if (shares == 0) revert InvalidAmount();
-        if (hasRole(SOFT_RESTRICTED_STAKER_ROLE, caller) || hasRole(SOFT_RESTRICTED_STAKER_ROLE, receiver)) {
-            revert OperationNotAllowed();
-        }
-        super._deposit(caller, receiver, assets, shares);
+    function _deposit(address caller, address recipient, uint256 assets, uint256 shares) internal override nonReentrant {
+        if (shares == 0 || assets == 0) revert InvalidAmount();
+
+        super._deposit(caller, recipient, assets, shares);
         _checkMinShares();
     }
 
-    function _withdraw(address caller, address receiver, address _owner, uint256 assets, uint256 shares) internal override nonReentrant {
-        if (shares == 0) revert InvalidAmount();
-        if (hasRole(FULL_RESTRICTED_STAKER_ROLE, caller) || hasRole(FULL_RESTRICTED_STAKER_ROLE, receiver) || hasRole(FULL_RESTRICTED_STAKER_ROLE, _owner)) {
+    function _withdraw(address caller, address recipient, address _owner, uint256 assets, uint256 shares) internal override nonReentrant {
+        if (shares == 0 || assets == 0) revert InvalidAmount();
+        if (hasRole(BLACKLISTED_ROLE, _owner) || hasRole(BLACKLISTED_ROLE, recipient)) {
             revert OperationNotAllowed();
         }
 
-        super._withdraw(caller, receiver, _owner, assets, shares);
+        super._withdraw(caller, recipient, _owner, assets, shares);
         _checkMinShares();
     }
 
@@ -212,24 +223,35 @@ contract StakedKAITO is SingleAdminAccessControl, ReentrancyGuard, ERC20Permit, 
         lastDistributionTimestamp = block.timestamp;
     }
 
+    function _updateCooldownDuration(uint24 duration) internal {
+        if (duration > MAX_COOLDOWN_DURATION) revert InvalidDuration();
+
+        uint24 previousDuration = cooldownDuration;
+        cooldownDuration = duration;
+        emit CooldownDurationUpdated(previousDuration, cooldownDuration);
+    }
+
+    function _updateVestingPeriod(uint24 newVestingPeriod) internal {
+        if (getUnvestedAmount() > 0) revert StillVesting();
+        if (newVestingPeriod > MAX_VESTING_PERIOD) revert InvalidVestingPeriod();
+        emit VestingPeriodUpdated(vestingPeriod, newVestingPeriod);
+        vestingPeriod = newVestingPeriod;
+    }
+
     /**
      * @dev Hook that is called before any transfer of tokens. This includes
      * minting and burning. Disables transfers from or to of addresses with the FULL_RESTRICTED_STAKER_ROLE role.
      */
 
     function _beforeTokenTransfer(address from, address to, uint256) internal virtual override {
-        if (hasRole(FULL_RESTRICTED_STAKER_ROLE, from) && to != address(0)) {
+        if (hasRole(BLACKLISTED_ROLE, msg.sender)) {
             revert OperationNotAllowed();
         }
-        if (hasRole(FULL_RESTRICTED_STAKER_ROLE, to)) {
+        if (hasRole(BLACKLISTED_ROLE, from) && to != address(0)) {
             revert OperationNotAllowed();
         }
-    }
-
-    /**
-     * @dev Remove renounce role access from AccessControl, to prevent users to resign roles.
-     */
-    function renounceRole(bytes32, address) public virtual override {
-        revert OperationNotAllowed();
+        if (hasRole(BLACKLISTED_ROLE, to)) {
+            revert OperationNotAllowed();
+        }
     }
 }
